@@ -1,0 +1,14 @@
+version: "3"
+
+services:
+  energysmart-bridge:
+    build: .
+    volumes:
+       - /opt/energysmart-bridge:/config
+       - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+  energysmart-proxy:
+    build: ./energysmart-proxy
+    ports:
+      - "443:443"
+    restart: unless-stopped
