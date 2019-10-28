@@ -66,5 +66,8 @@ int Seconds between updates
 ```
 
 ## Change Log
+Version 1.0.1 - 2019-10-27
+- Fix compatibility with Home Assistant 0.95.4 MQTT extra keys
+
 Version 1.0.0 - 2018-10-25
 - Initial release
