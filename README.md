@@ -13,18 +13,19 @@ The controller posts the status of the water heater every five minutes to https:
 
 ## Docker
 1. Clone git repo and build docker image
-	- git clone https://github.com/excaliburpartners/EnergySmartBridge.git
-	- cd EnergySmartBridge
-	- docker-compose build
-2. Configure the MQTT server address and port 
-	- mkdir /opt/energysmart-bridge
-	- cp EnergySmartBridge/EnergySmartBridge.ini /opt/energysmart-bridge
-	- vim /opt/energysmart-bridge/EnergySmartBridge.ini
-3. Start docker container
-    - docker-compose create
-	- docker-compose start
-4. Verify connectivity by looking at logs
-	- docker-compose logs
+```
+git clone https://github.com/excaliburpartners/EnergySmartBridge.git
+cd EnergySmartBridge
+docker-compose build
+```
+2. Configure the MQTT server environment variables
+```
+vim docker-compose.yml
+```
+3. Start docker containers and verify connectivity
+```
+docker-compose up
+```
 
 ## MQTT
 This module will also publish discovery topics for Home Assistant to auto configure devices.
@@ -65,9 +66,3 @@ PUB energysmart/MAC/updaterate_command
 int Seconds between updates
 ```
 
-## Change Log
-Version 1.0.1 - 2019-10-27
-- Fix compatibility with Home Assistant 0.95.4 MQTT extra keys
-
-Version 1.0.0 - 2018-10-25
-- Initial release

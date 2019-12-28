@@ -9,7 +9,7 @@ namespace EnergySmartBridge
 {
     public class CoreServer
     {
-        private static ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private readonly List<IModule> modules = new List<IModule>();
         private readonly List<Task> tasks = new List<Task>();

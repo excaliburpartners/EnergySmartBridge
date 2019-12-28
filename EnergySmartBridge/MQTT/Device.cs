@@ -1,9 +1,5 @@
-﻿using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Newtonsoft.Json;
+using EnergySmartBridge.Modules;
 
 namespace EnergySmartBridge.MQTT
 {
@@ -14,6 +10,9 @@ namespace EnergySmartBridge.MQTT
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public string state_topic { get; set; }
 
-        public string availability_topic { get; set; } = "energysmart/status";
+        public string availability_topic { get; set; } = $"{Global.mqtt_prefix}/status";
+
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public DeviceRegistry device { get; set; } = MQTTModule.MqttDeviceRegistry;
     }
 }

@@ -1,7 +1,3 @@
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Net.Mail;
-
 namespace EnergySmartBridge
 {
     public abstract class Global
@@ -19,6 +15,7 @@ namespace EnergySmartBridge
         public static int mqtt_port;
         public static string mqtt_username;
         public static string mqtt_password;
+        public static string mqtt_prefix;
         public static string mqtt_discovery_prefix;
     }
 }

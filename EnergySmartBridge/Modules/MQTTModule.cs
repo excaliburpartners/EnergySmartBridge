@@ -1,34 +1,40 @@
-﻿using log4net;
+﻿using EnergySmartBridge.MQTT;
+using EnergySmartBridge.WebService;
+using log4net;
 using MQTTnet;
 using MQTTnet.Client;
-using System;
-using System.Collections.Generic;
-using System.Reflection;
-using System.Threading;
-using Newtonsoft.Json;
+using MQTTnet.Client.Connecting;
+using MQTTnet.Client.Disconnecting;
+using MQTTnet.Client.Options;
+using MQTTnet.Client.Receiving;
 using MQTTnet.Extensions.ManagedClient;
 using MQTTnet.Protocol;
-using System.Text.RegularExpressions;
-using System.Text;
-using EnergySmartBridge.MQTT;
-using System.Collections.Specialized;
-using EnergySmartBridge.WebService;
-using System.Net;
-using System.Web;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Net;
+using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Web;
 
 namespace EnergySmartBridge.Modules
 {
     public class MQTTModule : IModule
     {
-        private static ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
+        public static DeviceRegistry MqttDeviceRegistry { get; set; }
 
         private WebServerModule WebServer { get; set; }
         private IManagedMqttClient MqttClient { get; set; }
 
-        private Regex regexTopic = new Regex("energysmart/([A-F0-9]+)/(.*)", RegexOptions.Compiled);
+        private readonly Regex regexTopic = new Regex(Global.mqtt_prefix + "/([A-F0-9]+)/(.*)", RegexOptions.Compiled);
 
-        private ConcurrentDictionary<string, Queue<WaterHeaterOutput>> connectedModules = new ConcurrentDictionary<string, Queue<WaterHeaterOutput>>();
+        private readonly ConcurrentDictionary<string, Queue<WaterHeaterOutput>> connectedModules = new ConcurrentDictionary<string, Queue<WaterHeaterOutput>>();
 
         private readonly AutoResetEvent trigger = new AutoResetEvent(false);
 
@@ -41,8 +47,17 @@ namespace EnergySmartBridge.Modules
 
         public void Startup()
         {
+            MqttApplicationMessage lastwill = new MqttApplicationMessage()
+            {
+                Topic = $"{Global.mqtt_prefix}/status",
+                Payload = Encoding.UTF8.GetBytes("offline"),
+                QualityOfServiceLevel = MqttQualityOfServiceLevel.AtMostOnce,
+                Retain = true
+            };
+
             MqttClientOptionsBuilder options = new MqttClientOptionsBuilder()
-                .WithTcpServer(Global.mqtt_server);
+                .WithTcpServer(Global.mqtt_server)
+                .WithWillMessage(lastwill);
 
             if (!string.IsNullOrEmpty(Global.mqtt_username))
                 options = options
@@ -54,47 +69,70 @@ namespace EnergySmartBridge.Modules
                 .Build();
 
             MqttClient = new MqttFactory().CreateManagedMqttClient();
-            MqttClient.Connected += (sender, e) => 
+            MqttClient.ConnectedHandler = new MqttClientConnectedHandlerDelegate((e) =>
             {
                 log.Debug("Connected");
+
+                MqttDeviceRegistry = new DeviceRegistry()
+                {
+                    identifiers = Global.mqtt_prefix,
+                    name = Global.mqtt_prefix,
+                    sw_version = $"EnergySmartBridge {Assembly.GetExecutingAssembly().GetName().Version.ToString()}",
+                    model = "Water Heater Controller",
+                    manufacturer = "EnergySmart"
+                };
 
                 // Clear cache so we publish config on next check-in
                 connectedModules.Clear();
 
-                MqttClient.PublishAsync("energysmart/status", "online", MqttQualityOfServiceLevel.AtMostOnce, true);
-            };
-            MqttClient.ConnectingFailed += (sender, e) => { log.Debug("Error connecting" + e.Exception.Message); };
+                log.Debug("Publishing controller online");
+                PublishAsync($"{Global.mqtt_prefix}/status", "online");
+            });
+            MqttClient.ConnectingFailedHandler = new ConnectingFailedHandlerDelegate((e) => log.Debug("Error connecting " + e.Exception.Message));
+            MqttClient.DisconnectedHandler = new MqttClientDisconnectedHandlerDelegate((e) => log.Debug("Disconnected"));
 
             MqttClient.StartAsync(manoptions);
 
-            MqttClient.ApplicationMessageReceived += MqttClient_ApplicationMessageReceived;
+            MqttClient.ApplicationMessageReceivedHandler = new MqttApplicationMessageReceivedHandlerDelegate(OnAppMessage);
 
-            MqttClient.SubscribeAsync(new TopicFilterBuilder().WithTopic("energysmart/+/" + Topic.updaterate_command).Build());
-            MqttClient.SubscribeAsync(new TopicFilterBuilder().WithTopic("energysmart/+/" + Topic.mode_command).Build());
-            MqttClient.SubscribeAsync(new TopicFilterBuilder().WithTopic("energysmart/+/" + Topic.setpoint_command).Build());
+            // Subscribe to notifications for these command topics
+            List<Topic> toSubscribe = new List<Topic>()
+            {
+                Topic.updaterate_command,
+                Topic.mode_command,
+                Topic.setpoint_command
+            };
+
+            toSubscribe.ForEach((command) => MqttClient.SubscribeAsync(
+                new TopicFilterBuilder().WithTopic($"{Global.mqtt_prefix}/+/{command.ToString()}").Build()));
 
             // Wait until shutdown
             trigger.WaitOne();
 
-            MqttClient.PublishAsync("energysmart/status", "offline", MqttQualityOfServiceLevel.AtMostOnce, true);
+            log.Debug("Publishing controller offline");
+            PublishAsync($"{Global.mqtt_prefix}/status", "offline");
+
+            MqttClient.StopAsync();
         }
 
-        private void MqttClient_ApplicationMessageReceived(object sender, MqttApplicationMessageReceivedEventArgs e)
+        protected virtual void OnAppMessage(MqttApplicationMessageReceivedEventArgs e)
         {
             Match match = regexTopic.Match(e.ApplicationMessage.Topic);
 
             if (!match.Success)
                 return;
 
+            if (!Enum.TryParse(match.Groups[2].Value, true, out Topic topic))
+                return;
+
             string id = match.Groups[1].Value;
-            string command = match.Groups[2].Value;
             string payload = Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
 
-            log.Debug($"Received: Id: {id}, Command: {command}, Value: {payload}");
+            log.Debug($"Received: Id: {id}, Command: {topic.ToString()}, Value: {payload}");
 
             if(connectedModules.ContainsKey(id))
             {
-                if (string.Compare(command, Topic.updaterate_command.ToString()) == 0 && 
+                if (topic == Topic.updaterate_command && 
                     int.TryParse(payload, out int updateRate) && updateRate >= 30 && updateRate <= 300)
                 {
                     log.Debug($"Queued {id} UpdateRate: {updateRate.ToString()}");
@@ -103,7 +141,7 @@ namespace EnergySmartBridge.Modules
                         UpdateRate = updateRate.ToString()
                     });
                 }
-                else if (string.Compare(command, Topic.mode_command.ToString()) == 0)
+                else if (topic == Topic.mode_command)
                 {
                     log.Debug($"Queued {id} Mode: {payload}");
                     connectedModules[id].Enqueue(new WaterHeaterOutput()
@@ -111,7 +149,7 @@ namespace EnergySmartBridge.Modules
                         Mode = payload
                     });
                 }
-                else if (string.Compare(command, Topic.setpoint_command.ToString()) == 0 &&
+                else if (topic == Topic.setpoint_command &&
                     double.TryParse(payload, out double setPoint) && setPoint >= 80 && setPoint <= 150)
                 {
                     log.Debug($"Queued {id} SetPoint: {((int)setPoint).ToString()}");
@@ -159,52 +197,57 @@ namespace EnergySmartBridge.Modules
 
         private void PublishWaterHeater(WaterHeaterInput waterHeater)
         {
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/climate/{waterHeater.DeviceText}/config",
-                JsonConvert.SerializeObject(waterHeater.ToThermostatConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/climate/{waterHeater.DeviceText}/config",
+                JsonConvert.SerializeObject(waterHeater.ToThermostatConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/binary_sensor/{waterHeater.DeviceText}/heating/config",
-                JsonConvert.SerializeObject(waterHeater.ToInHeatingConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/binary_sensor/{waterHeater.DeviceText}/heating/config",
+                JsonConvert.SerializeObject(waterHeater.ToInHeatingConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/hotwatervol/config",
-                JsonConvert.SerializeObject(waterHeater.ToHotWaterVolConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/hotwatervol/config",
+                JsonConvert.SerializeObject(waterHeater.ToHotWaterVolConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/uppertemp/config",
-                JsonConvert.SerializeObject(waterHeater.ToUpperTempConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/uppertemp/config",
+                JsonConvert.SerializeObject(waterHeater.ToUpperTempConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/lowertemp/config",
-                JsonConvert.SerializeObject(waterHeater.ToLowerTempConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/lowertemp/config",
+                JsonConvert.SerializeObject(waterHeater.ToLowerTempConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/dryfire/config",
-                JsonConvert.SerializeObject(waterHeater.ToDryFireConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/dryfire/config",
+                JsonConvert.SerializeObject(waterHeater.ToDryFireConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/elementfail/config",
-                JsonConvert.SerializeObject(waterHeater.ToElementFailConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/elementfail/config",
+                JsonConvert.SerializeObject(waterHeater.ToElementFailConfig()));
 
-            MqttClient.PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/tanksensorfail/config",
-                JsonConvert.SerializeObject(waterHeater.ToTankSensorFailConfig()), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync($"{Global.mqtt_discovery_prefix}/sensor/{waterHeater.DeviceText}/tanksensorfail/config",
+                JsonConvert.SerializeObject(waterHeater.ToTankSensorFailConfig()));
         }
 
         private void PublishWaterHeaterState(WaterHeaterInput waterHeater)
         {
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.maxsetpoint_state), waterHeater.MaxSetPoint.ToString(), MqttQualityOfServiceLevel.AtMostOnce, true);
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.setpoint_state), waterHeater.SetPoint.ToString(), MqttQualityOfServiceLevel.AtMostOnce, true);
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.mode_state), waterHeater.Mode, MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.maxsetpoint_state), waterHeater.MaxSetPoint.ToString());
+            PublishAsync(waterHeater.ToTopic(Topic.setpoint_state), waterHeater.SetPoint.ToString());
+            PublishAsync(waterHeater.ToTopic(Topic.mode_state), waterHeater.Mode);
 
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.systeminheating_state), waterHeater.SystemInHeating ? "ON" : "OFF", MqttQualityOfServiceLevel.AtMostOnce, true);
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.hotwatervol_state), waterHeater.HotWaterVol, MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.systeminheating_state), waterHeater.SystemInHeating ? "ON" : "OFF");
+            PublishAsync(waterHeater.ToTopic(Topic.hotwatervol_state), waterHeater.HotWaterVol);
 
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.uppertemp_state), waterHeater.UpperTemp.ToString(), MqttQualityOfServiceLevel.AtMostOnce, true);
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.lowertemp_state), waterHeater.LowerTemp.ToString(), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.uppertemp_state), waterHeater.UpperTemp.ToString());
+            PublishAsync(waterHeater.ToTopic(Topic.lowertemp_state), waterHeater.LowerTemp.ToString());
 
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.updaterate_state), waterHeater.UpdateRate.ToString(), MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.updaterate_state), waterHeater.UpdateRate.ToString());
 
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.dryfire_state), waterHeater.DryFire, MqttQualityOfServiceLevel.AtMostOnce, true);
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.elementfail_state), waterHeater.ElementFail, MqttQualityOfServiceLevel.AtMostOnce, true);
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.tanksensorfail_state), waterHeater.TankSensorFail, MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.dryfire_state), waterHeater.DryFire);
+            PublishAsync(waterHeater.ToTopic(Topic.elementfail_state), waterHeater.ElementFail);
+            PublishAsync(waterHeater.ToTopic(Topic.tanksensorfail_state), waterHeater.TankSensorFail);
 
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.faultcodes_state), waterHeater.FaultCodes, MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.faultcodes_state), waterHeater.FaultCodes);
 
-            MqttClient.PublishAsync(waterHeater.ToTopic(Topic.signalstrength_state), waterHeater.SignalStrength, MqttQualityOfServiceLevel.AtMostOnce, true);
+            PublishAsync(waterHeater.ToTopic(Topic.signalstrength_state), waterHeater.SignalStrength);
+        }
+
+        private Task PublishAsync(string topic, string payload)
+        {
+            return MqttClient.PublishAsync(topic, payload, MqttQualityOfServiceLevel.AtMostOnce, true);
         }
     }
 }

@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Collections.Specialized;
+﻿using EnergySmartBridge.WebService;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using EnergySmartBridge.WebService;
 
 namespace EnergySmartBridge.MQTT
 {
@@ -12,7 +7,7 @@ namespace EnergySmartBridge.MQTT
     {
         public static string ToTopic(this WaterHeaterInput waterHeater, Topic topic)
         {
-            return $"energysmart/{waterHeater.DeviceText}/{topic.ToString()}";
+            return $"{Global.mqtt_prefix}/{waterHeater.DeviceText}/{topic.ToString()}";
         }
         
         public static string GetDisplayName(this WaterHeaterInput waterHeater)

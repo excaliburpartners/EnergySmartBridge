@@ -1,53 +1,58 @@
 using log4net;
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.IO;
-using System.Linq;
-using System.Net;
-using System.Net.Mail;
 using System.Reflection;
 
 namespace EnergySmartBridge
 {
     public static class Settings
     {
-        private static ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-        public static void LoadSettings()
+        public static bool ShowDebug { get; set; }
+        public static bool UseEnvironment { get; set; }
+
+        public static void LoadSettings(string file)
         {
-            NameValueCollection settings = LoadCollection(Global.config_file);
+            LoadSettings(LoadCollection(file));
+        }
 
+        public static void LoadSettings(string[] lines)
+        {
+            LoadSettings(LoadCollection(lines));
+        }
+
+        public static void LoadSettings(NameValueCollection settings)
+        { 
             // Web Server
-            Global.webserver_port = ValidatePort(settings, "webserver_port");
+            Global.webserver_port = settings.ValidatePort("webserver_port");
 
             // MQTT
-            Global.mqtt_server = settings["mqtt_server"];
-            Global.mqtt_port = ValidatePort(settings, "mqtt_port");
-            Global.mqtt_username = settings["mqtt_username"];
-            Global.mqtt_password = settings["mqtt_password"];
-            Global.mqtt_discovery_prefix = settings["mqtt_discovery_prefix"];
+            Global.mqtt_server = settings.CheckEnv("mqtt_server");
+            Global.mqtt_port = settings.ValidatePort("mqtt_port");
+            Global.mqtt_username = settings.CheckEnv("mqtt_username");
+            Global.mqtt_password = settings.CheckEnv("mqtt_password");
+            Global.mqtt_prefix = settings.CheckEnv("mqtt_prefix") ?? "energysmart";
+            Global.mqtt_discovery_prefix = settings.CheckEnv("mqtt_discovery_prefix");
         }
 
-        private static int ValidateInt(NameValueCollection settings, string section)
+        private static string CheckEnv(this NameValueCollection settings, string name)
+        {
+            string env = UseEnvironment ? Environment.GetEnvironmentVariable(name.ToUpper()) : null;
+            string value = !string.IsNullOrEmpty(env) ? env : settings[name];
+
+            if (ShowDebug)
+                log.Debug((!string.IsNullOrEmpty(env) ? "ENV" : "CONF").PadRight(5) + $"{name}: {value}");
+
+            return value;
+        }
+
+        private static int ValidatePort(this NameValueCollection settings, string section)
         {
             try
             {
-                return Int32.Parse(settings[section]);
-            }
-            catch
-            {
-                log.Error("Invalid integer specified for " + section);
-                throw;
-            }
-        }
-
-        private static int ValidatePort(NameValueCollection settings, string section)
-        {
-            try
-            {
-                int port = Int32.Parse(settings[section]);
+                int port = int.Parse(settings.CheckEnv(section));
 
                 if (port < 1 || port > 65534)
                     throw new Exception();
@@ -61,160 +66,49 @@ namespace EnergySmartBridge
             }
         }
 
-        private static bool ValidateBool(NameValueCollection settings, string section)
+        private static NameValueCollection LoadCollection(string[] lines)
         {
-            try
-            {
-                return Boolean.Parse(settings[section]);
-            }
-            catch
-            {
-                log.Error("Invalid bool specified for " + section);
-                throw;
-            }
-        }
+            NameValueCollection settings = new NameValueCollection();
 
-        private static IPAddress ValidateIP(NameValueCollection settings, string section)
-        {
-            if (settings[section] == "*")
-                return IPAddress.Any;
-
-            if (settings[section] == "")
-                return IPAddress.None;
-
-            try
+            foreach (string line in lines)
             {
-                return IPAddress.Parse(section);
-            }
-            catch
-            {
-                log.Error("Invalid IP specified for " + section);
-                throw;
-            }
-        }
+                if (line.StartsWith("#"))
+                    continue;
 
-        private static string ValidateDirectory(NameValueCollection settings, string section)
-        {
-            try
-            {
-                if (!Directory.Exists(settings[section]))
-                    Directory.CreateDirectory(settings[section]);
+                int pos = line.IndexOf('=', 0);
 
-                return settings[section];
-            }
-            catch
-            {
-                log.Error("Invalid directory specified for " + section);
-                throw;
-            }
-        }
+                if (pos == -1)
+                    continue;
 
-        private static MailAddress ValidateMailFrom(NameValueCollection settings, string section)
-        {
-            try
-            {
-                return new MailAddress(settings[section]);
-            }
-            catch
-            {
-                log.Error("Invalid email specified for " + section);
-                throw;
-            }
-        }
+                string key = line.Substring(0, pos).Trim();
+                string value = line.Substring(pos + 1).Trim();
 
-        private static MailAddress[] ValidateMailTo(NameValueCollection settings, string section)
-        {
-            try
-            {
-                if(settings[section] == null)
-                    return new MailAddress[] {};
-
-                string[] emails = settings[section].Split(',');
-                MailAddress[] addresses = new MailAddress[emails.Length];
-
-                for(int i=0; i < emails.Length; i++)
-                    addresses[i] = new MailAddress(emails[i]);
-
-                return addresses;
+                settings.Add(key, value);
             }
-            catch
-            {
-                log.Error("Invalid email specified for " + section);
-                throw;
-            }
-        }
 
-        private static string[] ValidateMultipleStrings(NameValueCollection settings, string section)
-        {
-            try
-            {
-                if (settings[section] == null)
-                    return new string[] { };
-
-                return settings[section].Split(',');
-            }
-            catch
-            {
-                log.Error("Invalid string specified for " + section);
-                throw;
-            }
-        }
-
-        private static bool ValidateYesNo (NameValueCollection settings, string section)
-        {
-            if (settings[section] == null)
-                return false;
-            if (string.Compare(settings[section], "yes", true) == 0)
-                return true;
-            else if (string.Compare(settings[section], "no", true) == 0)
-                return false;
-            else
-            {
-                log.Error("Invalid yes/no specified for " + section);
-                throw new Exception();
-            }
+            return settings;
         }
 
         private static NameValueCollection LoadCollection(string sFile)
         {
-            NameValueCollection settings = new NameValueCollection();
+            if (ShowDebug)
+                log.Debug($"Using settings file {sFile}");
+
+            if (!File.Exists(sFile))
+            {
+                log.Warn($"Unable to locate settings file {sFile}");
+                return new NameValueCollection();
+            }
 
             try
             {
-                FileStream fs = new FileStream(sFile, FileMode.Open, FileAccess.Read);
-                StreamReader sr = new StreamReader(fs);
-
-                while (true)
-                {
-                    string line = sr.ReadLine();
-
-                    if (line == null)
-                        break;
-
-                    if (line.StartsWith("#"))
-                        continue;
-
-                    int pos = line.IndexOf('=', 0);
-
-                    if (pos == -1)
-                        continue;
-
-                    string key = line.Substring(0, pos).Trim();
-                    string value = line.Substring(pos + 1).Trim();
-
-                    settings.Add(key, value);
-                }
-
-                sr.Close();
-                fs.Close();
+                return LoadCollection(File.ReadAllLines(sFile));
             }
             catch (FileNotFoundException ex)
             {
-                log.Error("Unable to parse settings file " + sFile, ex);
+                log.Error("Error parsing settings file " + sFile, ex);
                 throw;
             }
-
-            return settings;
         }
     }
 }

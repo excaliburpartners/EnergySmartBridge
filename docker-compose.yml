@@ -4,8 +4,15 @@ services:
   energysmart-bridge:
     build: .
     volumes:
-       - /opt/energysmart-bridge:/config
-       - /etc/localtime:/etc/localtime:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - WEBSERVER_PORT=8001
+      - MQTT_SERVER=
+      - MQTT_PORT=1883
+      - MQTT_USERNAME=
+      - MQTT_PASSWORD=
+      - MQTT_PREFIX=energysmart
+      - MQTT_DISCOVERY_PREFIX=homeassistant
     restart: always
   energysmart-proxy:
     build: ./energysmart-proxy

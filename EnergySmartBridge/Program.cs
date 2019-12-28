@@ -1,8 +1,10 @@
-﻿using System;
+﻿using Mono.Unix;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.ServiceProcess;
+using System.Threading.Tasks;
 
 namespace EnergySmartBridge
 {
@@ -26,6 +28,12 @@ namespace EnergySmartBridge
                     case "-c":
                         Global.config_file = args[++i];
                         break;
+                    case "-e":
+                        Settings.UseEnvironment = true;
+                        break;
+                    case "-d":
+                        Settings.ShowDebug = true;
+                        break;
                     case "-i":
                         interactive = true;
                         break;
@@ -38,9 +46,12 @@ namespace EnergySmartBridge
 
             log4net.Config.XmlConfigurator.Configure();
 
+            if (Environment.UserInteractive || interactive)
+                Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
+
             try
             {
-                Settings.LoadSettings();
+                Settings.LoadSettings(Global.config_file);
             }
             catch
             {
@@ -50,10 +61,25 @@ namespace EnergySmartBridge
 
             if (Environment.UserInteractive || interactive)
             {
+                if (IsRunningOnMono())
+                {
+                    UnixSignal[] signals = new UnixSignal[]{
+                        new UnixSignal(Mono.Unix.Native.Signum.SIGTERM),
+                        new UnixSignal(Mono.Unix.Native.Signum.SIGINT),
+                        new UnixSignal(Mono.Unix.Native.Signum.SIGUSR1)
+                    };
+
+                    Task.Factory.StartNew(() =>
+                    {
+                        // Blocking call to wait for any kill signal
+                        int index = UnixSignal.WaitAny(signals, -1);
+
+                        server.Shutdown();
+                    });
+                }
+
                 Console.TreatControlCAsInput = false;
                 Console.CancelKeyPress += new ConsoleCancelEventHandler(myHandler);
-
-                Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 
                 server = new CoreServer();
             }
@@ -79,11 +105,18 @@ namespace EnergySmartBridge
             args.Cancel = true;
         }
 
+        static bool IsRunningOnMono()
+        {
+            return Type.GetType("Mono.Runtime") != null;
+        }
+
         static void ShowHelp()
         {
             Console.WriteLine(
-                AppDomain.CurrentDomain.FriendlyName + " [-c config_file] [-s subscriptions_file] [-i]\n" +
+                AppDomain.CurrentDomain.FriendlyName + " [-c config_file] [-e] [-d] [-s subscriptions_file] [-i]\n" +
                 "\t-c Specifies the configuration file. Default is EnergySmartBridge.ini\n" +
+                "\t-e Check environment variables for configuration settings\n" +
+                "\t-d Show debug output for configuration loading\n" +
                 "\t-i Run in interactive mode");
         }
     }

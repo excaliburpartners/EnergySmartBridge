@@ -14,7 +14,7 @@ namespace EnergySmartBridge.Modules
 {
     public class WebServerModule : IModule
     {
-        static ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private readonly HttpListener _listener = new HttpListener();
         private readonly Dictionary<string, Func<HttpListenerRequest, object>> prefixmap;
