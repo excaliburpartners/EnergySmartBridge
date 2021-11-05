@@ -123,7 +123,7 @@ namespace EnergySmartBridge.Modules
                 else
                 {
                     string content = new System.IO.StreamReader(request.InputStream).ReadToEnd();
-                    log.Warn($"URL not found: {request.Url.ToString()}\n{content}");
+                    log.Warn($"URL not found: {request.Url}\n{content}");
                     return JsonConvert.SerializeObject("notfound");
                 }
             }

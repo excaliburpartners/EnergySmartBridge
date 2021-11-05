@@ -77,7 +77,7 @@ namespace EnergySmartBridge.Modules
                 {
                     identifiers = Global.mqtt_prefix,
                     name = Global.mqtt_prefix,
-                    sw_version = $"EnergySmartBridge {Assembly.GetExecutingAssembly().GetName().Version.ToString()}",
+                    sw_version = $"EnergySmartBridge {Assembly.GetExecutingAssembly().GetName().Version}",
                     model = "Water Heater Controller",
                     manufacturer = "EnergySmart"
                 };
@@ -104,7 +104,7 @@ namespace EnergySmartBridge.Modules
             };
 
             toSubscribe.ForEach((command) => MqttClient.SubscribeAsync(
-                new TopicFilterBuilder().WithTopic($"{Global.mqtt_prefix}/+/{command.ToString()}").Build()));
+                new MqttTopicFilterBuilder().WithTopic($"{Global.mqtt_prefix}/+/{command}").Build()));
 
             // Wait until shutdown
             trigger.WaitOne();
@@ -128,14 +128,14 @@ namespace EnergySmartBridge.Modules
             string id = match.Groups[1].Value;
             string payload = Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
 
-            log.Debug($"Received: Id: {id}, Command: {topic.ToString()}, Value: {payload}");
+            log.Debug($"Received: Id: {id}, Command: {topic}, Value: {payload}");
 
             if(connectedModules.ContainsKey(id))
             {
                 if (topic == Topic.updaterate_command && 
                     int.TryParse(payload, out int updateRate) && updateRate >= 30 && updateRate <= 300)
                 {
-                    log.Debug($"Queued {id} UpdateRate: {updateRate.ToString()}");
+                    log.Debug($"Queued {id} UpdateRate: {updateRate}");
                     connectedModules[id].Enqueue(new WaterHeaterOutput()
                     {
                         UpdateRate = updateRate.ToString()
@@ -152,7 +152,7 @@ namespace EnergySmartBridge.Modules
                 else if (topic == Topic.setpoint_command &&
                     double.TryParse(payload, out double setPoint) && setPoint >= 80 && setPoint <= 150)
                 {
-                    log.Debug($"Queued {id} SetPoint: {((int)setPoint).ToString()}");
+                    log.Debug($"Queued {id} SetPoint: {((int)setPoint)}");
                     connectedModules[id].Enqueue(new WaterHeaterOutput()
                     {
                         SetPoint = ((int)setPoint).ToString()
