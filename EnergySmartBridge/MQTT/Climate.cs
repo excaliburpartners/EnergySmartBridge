@@ -17,8 +17,8 @@ namespace EnergySmartBridge.MQTT
         public string mode_state_topic { get; set; }
         public List<string> modes { get; set; }
 
-        public string hold_state_topic { get; set; }
-        public string hold_command_topic { get; set; }
-        public List<string> hold_modes { get; set; }
+        public string preset_mode_state_topic { get; set; }
+        public string preset_mode_command_topic { get; set; }
+        public List<string> preset_modes { get; set; }
     }
 }

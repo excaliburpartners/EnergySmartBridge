@@ -35,9 +35,9 @@ namespace EnergySmartBridge.MQTT
                 mode_state_topic = waterHeater.ToTopic(Topic.mode_state),
                 modes = new List<string>(new string[] { "heat" }),
 
-                hold_state_topic = waterHeater.ToTopic(Topic.mode_state),
-                hold_command_topic = waterHeater.ToTopic(Topic.mode_command),
-                hold_modes = waterHeater.AvailableModes.Split(',').ToList()
+                preset_mode_state_topic = waterHeater.ToTopic(Topic.mode_state),
+                preset_mode_command_topic = waterHeater.ToTopic(Topic.mode_command),
+                preset_modes = waterHeater.AvailableModes.Split(',').ToList()
             };
             return ret;
         }
