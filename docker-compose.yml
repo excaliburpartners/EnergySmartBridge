@@ -16,6 +16,8 @@ services:
     restart: always
   energysmart-proxy:
     build: ./energysmart-proxy
+    environment:
+      - PROXY_PASS_LOCATION=energysmart-bridge:8001
     ports:
       - "443:443"
     restart: always
