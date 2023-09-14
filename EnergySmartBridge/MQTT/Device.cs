@@ -6,6 +6,7 @@ namespace EnergySmartBridge.MQTT
     public class Device
     {
         public string name { get; set; }
+        public string unique_id { get; set; }
 
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public string state_topic { get; set; }
